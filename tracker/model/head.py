@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class RPN(nn.Module):
@@ -18,93 +19,36 @@ class RPN(nn.Module):
         raise NotImplemented
 
 
-def conv2d_dw_group(x, kernel):
-    batch, channel = kernel.shape[:2]
-    x = x.view(1, batch*channel, x.size(2), x.size(3))  # 1 * (b*c) * k * k
-    kernel = kernel.view(batch*channel, 1, kernel.size(2), kernel.size(3))  # (b*c) * 1 * H * W
-    out = F.conv2d(x, kernel, groups=batch * channel)
-    out = out.view(batch, channel, out.size(2), out.size(3))
-    return out
+class RPNHead(RPN):
 
+    def __init__(self, anchor_num: int = 5):
+        super(RPNHead, self).__init__()
+        self.K = anchor_num
 
-class DepthwiseXCorr(nn.Module):
-    def __init__(self,
-                 in_channels: int,
-                 hidden: int,
-                 out_channels: int,
-                 kernel_size: int = 3):
-        super(DepthwiseXCorr, self).__init__()
-        self.conv_kernel = nn.Sequential(
-                nn.Conv2d(in_channels, hidden, kernel_size=kernel_size, bias=False),
-                nn.BatchNorm2d(hidden),
-                nn.ReLU(inplace=True),
-        )
-        self.conv_search = nn.Sequential(
-                nn.Conv2d(in_channels, hidden, kernel_size=kernel_size, bias=False),
-                nn.BatchNorm2d(hidden),
-                nn.ReLU(inplace=True),
-        )
+        self.cls_z = nn.Conv2d(256, 256 * 2 * self.K, kernel_size=3, stride=1, padding=0)
+        self.reg_z = nn.Conv2d(256, 256 * 4 * self.K, kernel_size=3, stride=1, padding=0)
 
-        self.head = nn.Sequential(
-                nn.Conv2d(hidden, hidden, kernel_size=1, bias=False),
-                nn.BatchNorm2d(hidden),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(hidden, out_channels, kernel_size=1)
-        )
+        self.cls_x = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=0)
+        self.reg_x = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=0)
 
-    def forward_corr(self, kernel, input):
-        kernel = self.conv_kernel(kernel)
-        input = self.conv_search(input)
-        feature = conv2d_dw_group(input, kernel)
-        return feature
+    def forward(self, z_ft, x_ft):
+        N = z_ft.shape[0]
 
-    def forward(self, kernel, search):
-        feature = self.forward_corr(kernel, search)
-        out = self.head(feature)
-        return out
+        cls_z = self.cls_z(z_ft)  # [N, 2K*256, 4, 4]
+        reg_z = self.reg_z(z_ft)  # [N, 4K*256, 4, 4]
 
+        cls_x = self.cls_x(x_ft)  # [N, 256, 20, 20]
+        reg_x = self.reg_x(x_ft)  # [N, 256, 20, 20]
 
-class DepthwiseRPN(RPN):
-    """DepthwiseRPN
+        # cross-correlation
+        cls_z = cls_z.view(-1, 256, 4, 4)  # [N*2K, 256, 4, 4]
+        cls_x = cls_x.view(1, -1, 20, 20)  # [1, N*256, 20, 20]
+        pred_cls = F.conv2d(cls_x, cls_z, groups=N)  # [1, N*2K, 17, 17]
+        pred_cls = pred_cls.view(N, -1, pred_cls.shape[2], pred_cls.shape[3])  # [N, 2K, 17, 17]
 
-    Args:
-        batch (int): batch size for train, batch = 1 if test
-        anchor_num  (int): number of anchors
-        out_channels (int): hidden features channels
+        reg_z = reg_z.view(-1, 256, 4, 4)  # [N*4K, 256, 4, 4]
+        reg_x = reg_x.view(1, -1, 20, 20)  # [1, N*256, 20, 20]
+        pred_reg = F.conv2d(reg_x, reg_z, groups=N)  # [1, N*4K, 17, 17]
+        pred_reg = pred_reg.view(N, -1, pred_reg.shape[2], pred_reg.shape[3])  # [N, 4K, 17, 17]
 
-    Returns:
-        cls (torch.tensor): class
-        loc (torch.tensor): location
-    """
-    def __init__(self,
-                 in_channels: int = 256,
-                 anchor_num: int = 5,
-                 out_channels: int = 256) -> None:
-        super(DepthwiseRPN, self).__init__()
-        self.cls = DepthwiseXCorr(
-            in_channels=in_channels,
-            hidden=2 * anchor_num,
-            out_channels=out_channels
-        )
-        self.loc = DepthwiseXCorr(
-            in_channels=in_channels,
-            hidden=2 * anchor_num,
-            out_channels=out_channels
-        )
-
-    def forward(self, z_f, x_f):
-        """
-
-        Args:
-            z_f (torch.tensor): features
-                [batch_size, channels, z_f height, z_f width]
-            x_f (torch.tensor): features
-                [batch_size, channels, x_f height, x_f width]
-
-        Returns:
-            cls (torch.tensor): TO DO
-            loc (torch.tensor): TO DO
-        """
-        cls = self.cls(z_f, x_f)
-        loc = self.cls(z_f, x_f)
-        return cls, loc
+        return pred_cls, pred_reg
