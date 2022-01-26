@@ -22,3 +22,26 @@ class AlexNet(Backbone):
         super().__init__()
         model = alexnet(pretrained, progress)
         self.backbone = model.features[:layer_index + 1]
+
+
+class SiameseAlexNet(Backbone):
+    def __init__(self, ):
+        super(SiameseAlexNet, self).__init__()
+        self.backbone = nn.Sequential(
+            nn.Conv2d(3, 96, 11, stride=2),
+            nn.BatchNorm2d(96),
+            nn.MaxPool2d(3, stride=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(96, 256, 5),
+            nn.BatchNorm2d(256),
+            nn.MaxPool2d(3, stride=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 384, 3),
+            nn.BatchNorm2d(384),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(384, 384, 3),
+            nn.BatchNorm2d(384),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(384, 256, 3),
+            nn.BatchNorm2d(256),
+        )
