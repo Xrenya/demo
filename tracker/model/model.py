@@ -1,5 +1,5 @@
-from head import DepthwiseRPN
-from backbone import AlexNet
+from head import RPNHead
+from backbone import SiameseAlexNet
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -7,8 +7,8 @@ import torch.nn.functional as F
 class SiamRPN(nn.Module):
     def __init__(self):
         super(SiamRPN, self).__init__()
-        self.backbone = AlexNet()
-        self.rpn_head = DepthwiseRPN()
+        self.backbone = SiameseAlexNet()
+        self.rpn_head = RPNHead()
         self.z = None
         self.x = None
         self.cls = None
@@ -27,7 +27,6 @@ class SiamRPN(nn.Module):
     def forward(self, template, search):
         z = self.backbone(template)
         x = self.backbone(search)
-        print(z.shape, x.shape)
         self.cls, self.loc = self.rpn_head(z, x)
         return {
             "cls": self.cls, "loc": self.loc
